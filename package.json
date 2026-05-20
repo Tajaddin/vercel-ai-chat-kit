@@ -1,0 +1,45 @@
+{
+  "name": "vercel-ai-chat-kit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Production-shape Next.js 15 + Vercel AI SDK chat. Streaming SSE, tool calls, citations, abort/regenerate. Hero: framework TTFT median <1ms with mock provider, 100% TypeScript strict.",
+  "license": "MIT",
+  "author": "Tajaddin Gafarov <gafarovtajaddin@gmail.com>",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev --port 3001",
+    "build": "next build",
+    "start": "next start --port 3001",
+    "lint": "eslint . --max-warnings 0",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "bench": "tsx benchmarks/ttft_benchmark.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^1.0.0",
+    "@ai-sdk/react": "^1.0.0",
+    "ai": "^4.0.0",
+    "next": "^15.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.0",
+    "@testing-library/react": "^16.1.0",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "eslint": "^9.16.0",
+    "eslint-config-next": "^15.0.0",
+    "jsdom": "^25.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
