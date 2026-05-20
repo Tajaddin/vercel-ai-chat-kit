@@ -1,0 +1,9 @@
+services:
+  app:
+    build: .
+    image: vercel-ai-chat-kit:latest
+    ports:
+      - "3001:3001"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - NODE_ENV=production
