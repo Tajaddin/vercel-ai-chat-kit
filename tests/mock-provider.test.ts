@@ -14,8 +14,8 @@ describe("mockTextStream", () => {
   it("respects per-chunk delay (loosely)", async () => {
     const start = performance.now();
     let count = 0;
-    for await (const _ of mockTextStream({ reply: "abcd", chunkSize: 1, perChunkDelayMs: 5 })) {
-      count++;
+    for await (const chunk of mockTextStream({ reply: "abcd", chunkSize: 1, perChunkDelayMs: 5 })) {
+      if (chunk) count++;
     }
     const elapsed = performance.now() - start;
     expect(count).toBe(4);

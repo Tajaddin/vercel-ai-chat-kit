@@ -61,6 +61,7 @@ export async function timeStream(opts: MockStreamOptions): Promise<{
   totalMs: number;
   textLength: number;
   chunks: number;
+  bytes: number;
 }> {
   const stream = toSseStream(mockTextStream(opts));
   const reader = stream.getReader();
@@ -84,5 +85,6 @@ export async function timeStream(opts: MockStreamOptions): Promise<{
     totalMs,
     textLength: opts.reply.length,
     chunks,
+    bytes,
   };
 }
