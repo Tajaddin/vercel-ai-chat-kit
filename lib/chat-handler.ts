@@ -15,7 +15,10 @@ import { tools } from "@/lib/tools";
 export interface ChatLimits {
   maxBodyBytes: number;
   maxMessages: number;
-  /** Per message `content`. */
+  /**
+   * Per user message `content`. Assistant turns are the model's own replies,
+   * which can run longer; maxBodyBytes bounds them with everything else.
+   */
   maxMessageChars: number;
 }
 
@@ -170,8 +173,8 @@ function checkMessages(
     if (typeof m !== "object" || m === null || !ROLES.has(m.role as string) || typeof m.content !== "string") {
       return { status: 400, error: "each message needs role user or assistant and string content" };
     }
-    if (m.content.length > limits.maxMessageChars) {
-      return { status: 413, error: `message over ${limits.maxMessageChars} characters` };
+    if (m.role === "user" && m.content.length > limits.maxMessageChars) {
+      return { status: 413, error: `user message over ${limits.maxMessageChars} characters` };
     }
   }
   return null;

@@ -118,6 +118,20 @@ describe("chat handler", () => {
     expect((await h(post({ messages: [{ role: "user", content: "x".repeat(10) }] }))).status).toBe(200);
   });
 
+  it("does not cap the model's own replies, so a long answer cannot lock the conversation", async () => {
+    const res = await handler()(
+      post({
+        messages: [
+          { role: "user", content: "explain" },
+          { role: "assistant", content: "a".repeat(9_000) },
+          { role: "user", content: "thanks" },
+        ],
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(await streamedText(res)).toBe(REPLY);
+  });
+
   it("gives the model only each message's checked role and content", async () => {
     const { prompts, model } = recordingModel();
     const h = handler({ model, limits: { maxMessageChars: 10 } });
