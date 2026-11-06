@@ -78,9 +78,6 @@ export function createChatHandler(opts: ChatHandlerOptions): (req: Request) => P
     const problem = checkMessages(body?.messages, limits);
     if (problem) return json(problem.status, { error: problem.error });
 
-    const model = opts.model();
-    if (!model) return json(500, { error: "model provider not configured" });
-
     // useChat also sends parts, tool invocations and attachments, which
     // convertToCoreMessages would prefer over content, unchecked. Earlier tool
     // results reach the model only through the assistant's own text, and an
@@ -89,6 +86,10 @@ export function createChatHandler(opts: ChatHandlerOptions): (req: Request) => P
     const messages: CoreMessage[] = (body.messages as ChatMessage[])
       .filter((m) => m.role === "user" || m.content !== "")
       .map(({ role, content }) => ({ role, content }));
+    if (messages.length === 0) return json(400, { error: "no message has text" });
+
+    const model = opts.model();
+    if (!model) return json(500, { error: "model provider not configured" });
 
     const result = streamText({
       model,
