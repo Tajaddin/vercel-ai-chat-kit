@@ -33,7 +33,7 @@ export interface ChatHandlerOptions {
   accessKey: () => string | undefined;
   /** The model to stream from, or null when the provider is not configured. */
   model: () => LanguageModel | null;
-  /** Requests allowed per client in each window, kept in this process's memory. */
+  /** Requests allowed per window across all callers, kept in this process's memory. */
   rateLimit: { limit: number; windowMs: number };
   limits?: Partial<ChatLimits>;
   now?: () => number;
@@ -57,7 +57,7 @@ export function createChatHandler(opts: ChatHandlerOptions): (req: Request) => P
       return json(401, { error: "missing or wrong access key" }, { "www-authenticate": "Bearer" });
     }
 
-    const wait = retryAfter(clientId(req));
+    const wait = retryAfter();
     if (wait > 0) return json(429, { error: "rate limit exceeded" }, { "retry-after": String(wait) });
 
     const raw = await readBody(req, limits.maxBodyBytes);
@@ -111,30 +111,26 @@ function hasBearer(req: Request, key: string): boolean {
   return match !== null && timingSafeEqual(sha256(match[1]!), sha256(key));
 }
 
-// Trusts the first X-Forwarded-For hop, which is right behind a proxy that
-// sets it (Vercel, nginx). Exposed directly, callers can pick their own id,
-// so the limit is per access key holder at best.
-function clientId(req: Request): string {
-  const forwarded = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  return forwarded || req.headers.get("x-real-ip") || "unknown";
-}
-
-/** Fixed window per client. Returns 0 if the request may proceed, else seconds to wait. */
+/**
+ * One fixed window for every caller. They all hold the same key, and a
+ * per-client id (an X-Forwarded-For hop) is whatever the caller sends, so
+ * only a budget for the key as a whole bounds what the deployment spends.
+ * Returns 0 if the request may proceed, else seconds to wait.
+ */
 function rateLimiter(
   { limit, windowMs }: { limit: number; windowMs: number },
   now: () => number,
-): (id: string) => number {
-  const windows = new Map<string, { count: number; resetAt: number }>();
-  return (id) => {
+): () => number {
+  let count = 0;
+  let resetAt = Number.NEGATIVE_INFINITY;
+  return () => {
     const t = now();
-    let w = windows.get(id);
-    if (!w || t >= w.resetAt) {
-      if (windows.size > 1000) for (const [k, v] of windows) if (t >= v.resetAt) windows.delete(k);
-      w = { count: 0, resetAt: t + windowMs };
-      windows.set(id, w);
+    if (t >= resetAt) {
+      count = 0;
+      resetAt = t + windowMs;
     }
-    if (w.count >= limit) return Math.max(1, Math.ceil((w.resetAt - t) / 1000));
-    w.count++;
+    if (count >= limit) return Math.max(1, Math.ceil((resetAt - t) / 1000));
+    count++;
     return 0;
   };
 }

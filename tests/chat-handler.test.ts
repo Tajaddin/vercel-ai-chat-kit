@@ -86,21 +86,26 @@ describe("chat handler", () => {
     expect(calls.n).toBe(0);
   });
 
-  it("rate-limits each client per window", async () => {
+  it("rate-limits the key as a whole, whatever client id a caller claims", async () => {
     let now = 0;
     const h = handler({ rateLimit: { limit: 2, windowMs: 60_000 }, now: () => now });
     const from = (ip: string) => post(HI, { ...AUTH, "x-forwarded-for": `${ip}, 10.0.0.1` });
 
     expect((await h(from("1.1.1.1"))).status).toBe(200);
-    expect((await h(from("1.1.1.1"))).status).toBe(200);
-    const limited = await h(from("1.1.1.1"));
+    expect((await h(from("2.2.2.2"))).status).toBe(200);
+    const limited = await h(from("3.3.3.3"));
     expect(limited.status).toBe(429);
     expect(limited.headers.get("retry-after")).toBe("60");
 
-    expect((await h(from("2.2.2.2"))).status).toBe(200);
-
     now = 60_000;
-    expect((await h(from("1.1.1.1"))).status).toBe(200);
+    expect((await h(from("4.4.4.4"))).status).toBe(200);
+  });
+
+  it("does not count requests without the key against the rate limit", async () => {
+    const h = handler({ rateLimit: { limit: 2, windowMs: 60_000 } });
+    for (let i = 0; i < 5; i++) expect((await h(post(HI, {}))).status).toBe(401);
+    expect((await h(post(HI))).status).toBe(200);
+    expect((await h(post(HI))).status).toBe(200);
   });
 
   it("rejects a body over the byte limit", async () => {
