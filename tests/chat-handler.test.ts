@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { createChatHandler, type ChatHandlerOptions } from "@/lib/chat-handler";
 import { mockLanguageModel } from "@/lib/mock-provider";
 
-const KEY = "test-access-key";
+const KEY = "test-access-key-0123456789abcdef0123";
 const REPLY = "hello from the mock model";
 const AUTH = { authorization: `Bearer ${KEY}` };
 const HI = { messages: [{ role: "user", content: "hi" }] };
@@ -66,6 +66,16 @@ describe("chat handler", () => {
   it("refuses every request while no access key is configured", async () => {
     const { calls, model } = countingModel();
     const res = await handler({ accessKey: () => undefined, model })(post(HI));
+    expect(res.status).toBe(503);
+    expect(calls.n).toBe(0);
+  });
+
+  it("refuses every request while the configured key is under 32 characters", async () => {
+    const { calls, model } = countingModel();
+    const short = "k".repeat(31);
+    const res = await handler({ accessKey: () => short, model })(
+      post(HI, { authorization: `Bearer ${short}` }),
+    );
     expect(res.status).toBe(503);
     expect(calls.n).toBe(0);
   });

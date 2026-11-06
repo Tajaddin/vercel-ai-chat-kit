@@ -1,6 +1,6 @@
 # vercel-ai-chat-kit
 
-> Production-shape Next.js 15 + Vercel AI SDK chat. **Chat API handler TTFB 0.50 ms p50** (in-process, mock model), streaming responses, tool calls with footnote citations, abort + regenerate, access-key gate, rate limit and request size limits on the chat API, 100% TypeScript strict, 124 kB First Load JS. 33 tests, reproducible benchmarks in seconds.
+> Production-shape Next.js 15 + Vercel AI SDK chat. **Chat API handler TTFB 0.50 ms p50** (in-process, mock model), streaming responses, tool calls with footnote citations, abort + regenerate, access-key gate, rate limit and request size limits on the chat API, 100% TypeScript strict, 124 kB First Load JS. 34 tests, reproducible benchmarks in seconds.
 
 [![ci](https://github.com/Tajaddin/vercel-ai-chat-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/Tajaddin/vercel-ai-chat-kit/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -38,7 +38,7 @@ Bundle size:
 | `lib/prompts.ts` | The system prompt. Stable across calls so the Anthropic provider can prompt-cache it. |
 | `lib/mock-provider.ts` | Chunked async iterable, a mock AI SDK model built on it, and a response timing helper. Used by tests and the TTFB benchmark to take the network and the LLM out of the measurement. |
 | `benchmarks/ttft_benchmark.ts` | 200-run TTFB, first-text-delta and total measurement of the chat handler with the mock model. Writes JSON to `benchmarks/results/`. |
-| `tests/` | Vitest + Testing Library. 33 tests covering the chat handler's checks, tool parsing, mock streaming, response timing, citation rendering, the benchmark setup. |
+| `tests/` | Vitest + Testing Library. 34 tests covering the chat handler's checks, tool parsing, mock streaming, response timing, citation rendering, the benchmark setup. |
 
 ## Why this matters for production
 
@@ -73,7 +73,7 @@ Expected behavior:
 
 `/api/chat` spends the deployment's Anthropic key, so it does nothing for anonymous callers:
 
-- **Access key.** Every request needs `Authorization: Bearer $CHAT_ACCESS_KEY` (compared in constant time). While `CHAT_ACCESS_KEY` is unset the route answers 503 to everyone; a missing or wrong key gets 401. The UI's "Access key" field sends it and keeps it in `sessionStorage` for the tab.
+- **Access key.** Every request needs `Authorization: Bearer $CHAT_ACCESS_KEY` (compared in constant time). While `CHAT_ACCESS_KEY` is unset or shorter than 32 characters the route answers 503 to everyone, because wrong-key attempts are not rate limited and the key itself has to be unguessable (`openssl rand -hex 32` gives 64); a missing or wrong key gets 401. The UI's "Access key" field sends it and keeps it in `sessionStorage` for the tab.
 - **Rate limit.** 20 requests per minute for the deployment as a whole, answered with 429 and `Retry-After`. Every caller holds the same key, and a per-client id such as an `X-Forwarded-For` hop is whatever the caller sends, so a single budget is what actually bounds spend. Requests without the key are rejected before they count. The counter lives in process memory, so each instance counts separately.
 - **Size limits.** Bodies over 256 KiB get 413 (the body is read up to the limit, not buffered whole), as do more than 50 messages or a user message over 8,000 characters. Assistant messages are the model's own replies and can run longer, so they have no cap of their own; the 256 KiB body limit bounds the conversation as a whole. Messages must be `user` or `assistant` with string content; anything else, including client-sent `system` messages, gets 400.
 - **Only checked text reaches the model.** `useChat` also sends `parts`, tool invocations and attachments, which the AI SDK would otherwise turn into the prompt instead of `content`. The handler passes the model each message's role and content and nothing else, so the limits above cover everything it reads. The cost: tool calls and results from earlier turns reach the model only through the assistant's own text.
@@ -119,8 +119,8 @@ This is in `components/message.tsx` and `components/citation.tsx`. Each is under
 npm test
 ```
 
-33 tests across:
-- **`chat-handler.test.ts`** — streams the mock model's reply with the right key; 503 with no key configured; 401 for a missing or wrong key; a rate limit that rotating `X-Forwarded-For` values do not escape, its window reset, and keyless requests not counting against it; 413 for body, message count and user message length, while a long assistant reply does not lock the conversation; 400 for bad JSON, roles and shapes. None of the rejected requests reaches the model, and the model's prompt holds only each message's role and content (no `parts`, tool results or attachments).
+34 tests across:
+- **`chat-handler.test.ts`** — streams the mock model's reply with the right key; 503 with no key or a key under 32 characters configured; 401 for a missing or wrong key; a rate limit that rotating `X-Forwarded-For` values do not escape, its window reset, and keyless requests not counting against it; 413 for body, message count and user message length, while a long assistant reply does not lock the conversation; 400 for bad JSON, roles and shapes. None of the rejected requests reaches the model, and the model's prompt holds only each message's role and content (no `parts`, tool results or attachments).
 - **`route.test.ts`** — the real route refuses unauthenticated requests without calling Anthropic.
 - **`chat.test.tsx`** — the UI sends the access key as a bearer token.
 - **`tools.test.ts`** — calculator handles `+`, `-`, `*`, `/`, `%`, `**`, unary minus, parens, division by zero, trailing garbage. Search returns matching snippets and rejects empty queries.
@@ -162,7 +162,7 @@ benchmarks/
   results/
     ttft.json
 
-tests/                     # 33 vitest tests
+tests/                     # 34 vitest tests
 ```
 
 ## What this is NOT

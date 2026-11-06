@@ -33,7 +33,7 @@ describe("POST /api/chat", () => {
   });
 
   it("does not call Anthropic for a request without the access key", async () => {
-    vi.stubEnv("CHAT_ACCESS_KEY", "route-test-key");
+    vi.stubEnv("CHAT_ACCESS_KEY", "route-test-key-0123456789abcdef01");
     const res = await POST(post({ authorization: "Bearer wrong" }));
     expect(res.status).toBe(401);
     expect(providerFetch).not.toHaveBeenCalled();

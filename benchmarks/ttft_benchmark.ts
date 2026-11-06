@@ -58,7 +58,7 @@ function stats(values: number[]) {
   };
 }
 
-const KEY = "benchmark-access-key";
+const KEY = "benchmark-access-key-0123456789abcdef";
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));

@@ -29,7 +29,11 @@ export const DEFAULT_LIMITS: ChatLimits = {
 };
 
 export interface ChatHandlerOptions {
-  /** Shared key callers send as `Authorization: Bearer <key>`. Unset refuses every request. */
+  /**
+   * Shared key callers send as `Authorization: Bearer <key>`. Unset or shorter
+   * than MIN_KEY_CHARS refuses every request: wrong guesses are not rate
+   * limited, so the key itself has to be unguessable.
+   */
   accessKey: () => string | undefined;
   /** The model to stream from, or null when the provider is not configured. */
   model: () => LanguageModel | null;
@@ -39,6 +43,7 @@ export interface ChatHandlerOptions {
   now?: () => number;
 }
 
+const MIN_KEY_CHARS = 32;
 const ROLES = new Set(["user", "assistant"]);
 
 interface ChatMessage {
@@ -52,7 +57,9 @@ export function createChatHandler(opts: ChatHandlerOptions): (req: Request) => P
 
   return async (req) => {
     const key = opts.accessKey();
-    if (!key) return json(503, { error: "CHAT_ACCESS_KEY not set" });
+    if (!key || key.length < MIN_KEY_CHARS) {
+      return json(503, { error: `CHAT_ACCESS_KEY must be set to at least ${MIN_KEY_CHARS} characters` });
+    }
     if (!hasBearer(req, key)) {
       return json(401, { error: "missing or wrong access key" }, { "www-authenticate": "Bearer" });
     }
