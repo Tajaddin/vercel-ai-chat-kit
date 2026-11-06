@@ -6,4 +6,5 @@ services:
       - "3001:3001"
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - CHAT_ACCESS_KEY=${CHAT_ACCESS_KEY:-}
       - NODE_ENV=production

@@ -1,6 +1,6 @@
 # vercel-ai-chat-kit
 
-> Production-shape Next.js 15 + Vercel AI SDK chat. **Framework TTFB p99 = 16μs**, full streaming SSE pipeline, tool calls with footnote citations, abort + regenerate, 100% TypeScript strict, 123 kB First Load JS. 19 tests, reproducible benchmarks in seconds.
+> Production-shape Next.js 15 + Vercel AI SDK chat. **Framework TTFB p99 = 16μs**, full streaming SSE pipeline, tool calls with footnote citations, abort + regenerate, access-key gate, rate limit and request size limits on the chat API, 100% TypeScript strict, 124 kB First Load JS. 30 tests, reproducible benchmarks in seconds.
 
 [![ci](https://github.com/Tajaddin/vercel-ai-chat-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/Tajaddin/vercel-ai-chat-kit/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -20,7 +20,7 @@ Reproducible: `npx tsx benchmarks/ttft_benchmark.ts --runs 200 --reply 240`
 Real-world TTFB on the live Anthropic API is bounded by Claude's TTFT (typically 150-400 ms for Haiku 4.5). The framework adds ~5 μs.
 
 Bundle size:
-- **First Load JS for `/`: 123 kB** (Next.js 15 App Router, React 19, full chat + tool rendering + citations)
+- **First Load JS for `/`: 124 kB** (`next build`; Next.js 15 App Router, React 19, full chat + tool rendering + citations)
 - API route `/api/chat`: 123 B
 - The whole production tree (`.next/standalone`) is what the Docker image ships.
 
@@ -28,13 +28,14 @@ Bundle size:
 
 | Path | Purpose |
 |---|---|
-| `app/api/chat/route.ts` | Streaming POST endpoint. Uses `streamText` from the Vercel AI SDK with Anthropic Haiku 4.5 + tools. Returns a data-stream response that `useChat` consumes. |
+| `app/api/chat/route.ts` | Streaming POST endpoint: wires `lib/chat-handler.ts` to Anthropic Haiku 4.5. |
+| `lib/chat-handler.ts` | Access key, rate limit, body and message limits, then `streamText` with the tools. Returns a data-stream response that `useChat` consumes. The model is injected, so tests and the benchmark run it with a mock. |
 | `app/page.tsx` + `components/chat.tsx` | Chat UI with `useChat` from `@ai-sdk/react`. Streaming text, tool-call rendering, abort, regenerate, footnote citations. |
 | `lib/tools.ts` | Two tools: `calculator` (recursive-descent parser, no `eval`) and `search` (offline corpus). Both follow the AI SDK `tool({ description, parameters, execute })` shape. |
 | `lib/prompts.ts` | The system prompt. Stable across calls so the Anthropic provider can prompt-cache it. |
-| `lib/mock-provider.ts` | Chunked async iterable + SSE framer + timing helper. Used by tests and the TTFB benchmark to remove the network from the measurement. |
+| `lib/mock-provider.ts` | Chunked async iterable, a mock AI SDK model built on it, SSE framer + timing helper. Used by tests and the TTFB benchmark to remove the network from the measurement. |
 | `benchmarks/ttft_benchmark.ts` | 200-run TTFB + total measurement of the framework. Writes JSON to `benchmarks/results/`. |
-| `tests/` | Vitest + Testing Library. 19 tests covering tool parsing, mock streaming, SSE framing, citation rendering, benchmark math. |
+| `tests/` | Vitest + Testing Library. 30 tests covering the chat handler's checks, tool parsing, mock streaming, SSE framing, citation rendering, benchmark math. |
 
 ## Why this matters for production
 
@@ -42,7 +43,7 @@ Recruiter signal this maps to:
 - **AI Product Engineer** (Blackboard, Worth AI, Bitovi, Temporal AI SDK, Honor)
 - **Streaming chat UIs with tool calls** (most "Sr Front-End on AI team" JDs in 2026)
 - **Next.js 15 App Router + React 19** (the contemporary stack)
-- **TypeScript strict + bundle-size discipline** (123 kB First Load JS is the receipt)
+- **TypeScript strict + bundle-size discipline** (124 kB First Load JS is the receipt)
 
 The Vercel AI SDK gives you primitives. This kit shows what to build with them and the framework cost of doing it.
 
@@ -52,8 +53,9 @@ The Vercel AI SDK gives you primitives. This kit shows what to build with them a
 npm install
 cp .env.example .env.local
 # add ANTHROPIC_API_KEY=sk-ant-...
+# and CHAT_ACCESS_KEY=$(openssl rand -hex 32)
 npm run dev
-# open http://localhost:3001
+# open http://localhost:3001 and paste CHAT_ACCESS_KEY into the "Access key" field
 ```
 
 Ask: *"What is (3 + 4) * 2, and what is the Vercel AI SDK?"*
@@ -63,6 +65,16 @@ Expected behavior:
 2. Model calls the `search` tool with `query="vercel ai sdk"`, gets one snippet.
 3. Streams a one-sentence answer with `[1]` superscript footnote linking to the snippet at the bottom of the bubble.
 4. `stop` button is visible while streaming; `regenerate` button after.
+
+## Access control
+
+`/api/chat` spends the deployment's Anthropic key, so it does nothing for anonymous callers:
+
+- **Access key.** Every request needs `Authorization: Bearer $CHAT_ACCESS_KEY` (compared in constant time). While `CHAT_ACCESS_KEY` is unset the route answers 503 to everyone; a missing or wrong key gets 401. The UI's "Access key" field sends it and keeps it in `sessionStorage` for the tab.
+- **Rate limit.** 20 requests per minute per client, keyed by the first `X-Forwarded-For` hop, answered with 429 and `Retry-After`. The counter lives in process memory, so each instance counts separately, and the client id is only as trustworthy as the proxy that sets the header.
+- **Size limits.** Bodies over 256 KiB get 413 (the body is read up to the limit, not buffered whole), as do more than 50 messages or a message over 8,000 characters. Messages must be `user` or `assistant` with string content; anything else, including client-sent `system` messages, gets 400.
+
+A request reaches the model only after passing all of them. To use your app's sessions instead of a shared key, replace the bearer check in `lib/chat-handler.ts` with your session lookup.
 
 ## Streaming pipeline
 
@@ -103,7 +115,10 @@ This is in `components/message.tsx` and `components/citation.tsx`. Each is under
 npm test
 ```
 
-19 tests across:
+30 tests across:
+- **`chat-handler.test.ts`** — streams the mock model's reply with the right key; 503 with no key configured; 401 for a missing or wrong key; per-client rate limit and window reset; 413 for body, message count and message length; 400 for bad JSON, roles and shapes. None of the rejected requests reaches the model.
+- **`route.test.ts`** — the real route refuses unauthenticated requests without calling Anthropic.
+- **`chat.test.tsx`** — the UI sends the access key as a bearer token.
 - **`tools.test.ts`** — calculator handles `+`, `-`, `*`, `/`, `%`, `**`, unary minus, parens, division by zero, trailing garbage. Search returns matching snippets and rejects empty queries.
 - **`mock-provider.test.ts`** — chunked async iterable, per-chunk delay, SSE framing (`data: <json>\n\n`).
 - **`citation.test.tsx`** — render component with multiple citations, with empty list.
@@ -112,7 +127,7 @@ npm test
 ## Docker
 
 ```bash
-docker compose up app
+CHAT_ACCESS_KEY=... ANTHROPIC_API_KEY=... docker compose up app
 # open http://localhost:3001
 ```
 
@@ -122,7 +137,7 @@ Multi-stage build, alpine base, runs as non-root `nextjs` user, ships only the `
 
 ```
 app/
-  api/chat/route.ts        # streamText + tools + toDataStreamResponse
+  api/chat/route.ts        # wires the chat handler to Anthropic
   page.tsx                 # server component, mounts <Chat />
   layout.tsx
   globals.css
@@ -133,6 +148,7 @@ components/
   citation.tsx             # footnote-style citation list
 
 lib/
+  chat-handler.ts          # access key, rate limit, size limits, streamText + tools
   tools.ts                 # calculator + search
   prompts.ts               # SYSTEM_PROMPT (cacheable)
   mock-provider.ts         # chunked stream + SSE framing + timing
@@ -142,7 +158,7 @@ benchmarks/
   results/
     ttft.json
 
-tests/                     # 19 vitest tests
+tests/                     # 30 vitest tests
 ```
 
 ## What this is NOT

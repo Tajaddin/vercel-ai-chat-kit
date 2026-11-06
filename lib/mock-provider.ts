@@ -1,9 +1,10 @@
 // Mock streaming text-only provider for tests and the no-API-key benchmark.
 //
-// Returns an async iterable of UTF-8 text chunks. The Vercel AI SDK's
-// streamText accepts this shape directly via the MockLanguageModelV1 helper,
-// but we hand-roll the iterator here so the package surface stays minimal
-// and the benchmark stays deterministic.
+// mockTextStream yields fixed-size text deltas; mockLanguageModel wraps it in
+// the AI SDK's MockLanguageModelV1 so it can stand in for Anthropic in the
+// chat handler. Deterministic, no network.
+
+import { MockLanguageModelV1 } from "ai/test";
 
 export interface StreamChunk {
   type: "text-delta";
@@ -27,6 +28,26 @@ export async function* mockTextStream(opts: MockStreamOptions): AsyncIterable<St
     }
     yield { type: "text-delta", textDelta: piece };
   }
+}
+
+/** A language model that streams `mockTextStream(opts)` and then finishes. */
+export function mockLanguageModel(opts: MockStreamOptions): MockLanguageModelV1 {
+  return new MockLanguageModelV1({
+    doStream: async () => ({
+      stream: new ReadableStream({
+        async start(controller) {
+          for await (const chunk of mockTextStream(opts)) controller.enqueue(chunk);
+          controller.enqueue({
+            type: "finish",
+            finishReason: "stop",
+            usage: { promptTokens: 0, completionTokens: 0 },
+          });
+          controller.close();
+        },
+      }),
+      rawCall: { rawPrompt: null, rawSettings: {} },
+    }),
+  });
 }
 
 /**
