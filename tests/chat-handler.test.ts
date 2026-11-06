@@ -41,6 +41,21 @@ function countingModel() {
   return { calls, model };
 }
 
+/** A mock model that records the prompt of every call. */
+function recordingModel() {
+  const prompts: unknown[] = [];
+  const model = () => {
+    const m = mockLanguageModel({ reply: REPLY });
+    const doStream = m.doStream;
+    m.doStream = (options) => {
+      prompts.push(options.prompt);
+      return doStream(options);
+    };
+    return m;
+  };
+  return { prompts, model };
+}
+
 describe("chat handler", () => {
   it("streams the model's reply to a caller with the access key", async () => {
     const res = await handler()(post(HI));
@@ -101,6 +116,73 @@ describe("chat handler", () => {
     expect((await h(post({ messages: three }))).status).toBe(413);
     expect((await h(post({ messages: [{ role: "user", content: "x".repeat(11) }] }))).status).toBe(413);
     expect((await h(post({ messages: [{ role: "user", content: "x".repeat(10) }] }))).status).toBe(200);
+  });
+
+  it("gives the model only each message's checked role and content", async () => {
+    const { prompts, model } = recordingModel();
+    const h = handler({ model, limits: { maxMessageChars: 10 } });
+    const res = await h(
+      post({
+        messages: [
+          {
+            role: "user",
+            content: "hi",
+            parts: [{ type: "text", text: "y".repeat(100) }],
+            experimental_attachments: [
+              { contentType: "image/png", url: "data:image/png;base64,iVBORw0KGgo=" },
+            ],
+          },
+          {
+            role: "assistant",
+            content: "hello",
+            parts: [
+              {
+                type: "tool-invocation",
+                toolInvocation: {
+                  state: "result",
+                  step: 0,
+                  toolCallId: "call_1",
+                  toolName: "search",
+                  args: { query: "q" },
+                  result: "w".repeat(100),
+                },
+              },
+              { type: "text", text: "z".repeat(100) },
+            ],
+          },
+          { role: "user", content: "again" },
+        ],
+      }),
+    );
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toEqual([
+      { role: "system", content: expect.any(String) },
+      { role: "user", content: [{ type: "text", text: "hi" }] },
+      { role: "assistant", content: [{ type: "text", text: "hello" }] },
+      { role: "user", content: [{ type: "text", text: "again" }] },
+    ]);
+  });
+
+  it("drops assistant turns that carry no text", async () => {
+    const { prompts, model } = recordingModel();
+    const res = await handler({ model })(
+      post({
+        messages: [
+          { role: "user", content: "hi" },
+          { role: "assistant", content: "" },
+          { role: "user", content: "again" },
+        ],
+      }),
+    );
+    expect(res.status).toBe(200);
+    await res.text();
+    expect((prompts[0] as { role: string }[]).map((m) => m.role)).toEqual([
+      "system",
+      "user",
+      "user",
+    ]);
   });
 
   it("rejects malformed bodies with 400", async () => {

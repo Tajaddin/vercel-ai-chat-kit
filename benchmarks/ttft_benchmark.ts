@@ -3,8 +3,8 @@
 // Sends POST requests straight into the chat handler (lib/chat-handler.ts,
 // the code app/api/chat/route.ts exports) with the Anthropic model swapped
 // for the mock in lib/mock-provider.ts. Each request goes through the access
-// key check, rate limiter, body read and validation, convertToCoreMessages,
-// streamText with the tools, and toDataStreamResponse. Timed from calling the
+// key check, rate limiter, body read and validation, streamText with the
+// tools, and toDataStreamResponse. Timed from calling the
 // handler (the Request is built beforehand) to the first body byte (TTFB),
 // the first text delta (TTFT) and the end of the stream.
 //

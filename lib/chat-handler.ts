@@ -3,10 +3,11 @@
 //
 // Checks run in this order, and nothing reaches the model (or spends API
 // credit) until all of them pass: access key, rate limit, body size, message
-// count and size.
+// count and size. The model then gets only the role and content that were
+// checked.
 
 import { createHash, timingSafeEqual } from "node:crypto";
-import { convertToCoreMessages, streamText, type LanguageModel } from "ai";
+import { streamText, type CoreMessage, type LanguageModel } from "ai";
 
 import { SYSTEM_PROMPT } from "@/lib/prompts";
 import { tools } from "@/lib/tools";
@@ -37,6 +38,11 @@ export interface ChatHandlerOptions {
 
 const ROLES = new Set(["user", "assistant"]);
 
+interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export function createChatHandler(opts: ChatHandlerOptions): (req: Request) => Promise<Response> {
   const limits = { ...DEFAULT_LIMITS, ...opts.limits };
   const retryAfter = rateLimiter(opts.rateLimit, opts.now ?? Date.now);
@@ -65,13 +71,14 @@ export function createChatHandler(opts: ChatHandlerOptions): (req: Request) => P
     const model = opts.model();
     if (!model) return json(500, { error: "model provider not configured" });
 
-    let messages;
-    try {
-      // The useChat hook sends Message[]; convertToCoreMessages normalizes it.
-      messages = convertToCoreMessages(body.messages as never);
-    } catch (err) {
-      return json(400, { error: (err as Error).message });
-    }
+    // useChat also sends parts, tool invocations and attachments, which
+    // convertToCoreMessages would prefer over content, unchecked. Earlier tool
+    // results reach the model only through the assistant's own text, and an
+    // assistant turn with no text (tool calls only) is dropped: Anthropic
+    // rejects empty text blocks.
+    const messages: CoreMessage[] = (body.messages as ChatMessage[])
+      .filter((m) => m.role === "user" || m.content !== "")
+      .map(({ role, content }) => ({ role, content }));
 
     const result = streamText({
       model,
