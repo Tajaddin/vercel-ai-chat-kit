@@ -1,6 +1,6 @@
 # vercel-ai-chat-kit
 
-> Production-shape Next.js 15 + Vercel AI SDK chat. **Framework TTFB p99 = 16μs**, full streaming SSE pipeline, tool calls with footnote citations, abort + regenerate, access-key gate, rate limit and request size limits on the chat API, 100% TypeScript strict, 124 kB First Load JS. 30 tests, reproducible benchmarks in seconds.
+> Production-shape Next.js 15 + Vercel AI SDK chat. **Chat API handler TTFB 0.50 ms p50** (in-process, mock model), streaming responses, tool calls with footnote citations, abort + regenerate, access-key gate, rate limit and request size limits on the chat API, 100% TypeScript strict, 124 kB First Load JS. 29 tests, reproducible benchmarks in seconds.
 
 [![ci](https://github.com/Tajaddin/vercel-ai-chat-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/Tajaddin/vercel-ai-chat-kit/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -8,16 +8,19 @@
 
 ## Hero metrics
 
-Framework overhead measured against the same SSE pipeline the chat API uses. The LLM adds whatever wire-time it adds. The numbers below are what the chat plumbing costs *on top*.
+What the chat API itself costs per request, before the model's own latency. The benchmark sends POST requests straight into the handler that `app/api/chat/route.ts` exports (`createChatHandler` in `lib/chat-handler.ts`), with the Anthropic model swapped for a mock that streams 240 characters in 4-character deltas with no delay. Each request goes through the access-key check, rate limiter, body read and validation, `convertToCoreMessages`, `streamText` with both tools, and `toDataStreamResponse`. Timing starts when the handler is called. It is in-process: Next.js's HTTP server, the network and the model are not in these numbers.
 
 Reproducible: `npx tsx benchmarks/ttft_benchmark.ts --runs 200 --reply 240`
 
-| Metric | p50 | p95 | p99 |
+| 200 runs after 20 warm-up, Node 24.14, i5-13600KF | p50 | p95 | p99 |
 |---|---:|---:|---:|
-| **Time-to-first-byte (framework)** | **5 μs** | 9 μs | **16 μs** |
-| Total stream (240 chars in 4-char chunks) | 166 μs | 392 μs | 540 μs |
+| **Time to first byte** | **0.50 ms** | 1.27 ms | 3.27 ms |
+| Time to first text delta | 0.54 ms | 1.37 ms | 3.33 ms |
+| Total stream (240 chars in 4-char deltas) | 2.46 ms | 5.55 ms | 7.46 ms |
 
-Real-world TTFB on the live Anthropic API is bounded by Claude's TTFT (typically 150-400 ms for Haiku 4.5). The framework adds ~5 μs.
+The tail is noisy: over three back-to-back runs, TTFB p50 stayed at 0.50-0.55 ms while p99 ranged from 3.3 to 6.5 ms. Raw output: `benchmarks/results/ttft.json`.
+
+Real-world TTFB on the live Anthropic API is bounded by Claude's TTFT (typically 150-400 ms for Haiku 4.5). The handler adds about half a millisecond at the median.
 
 Bundle size:
 - **First Load JS for `/`: 124 kB** (`next build`; Next.js 15 App Router, React 19, full chat + tool rendering + citations)
@@ -33,9 +36,9 @@ Bundle size:
 | `app/page.tsx` + `components/chat.tsx` | Chat UI with `useChat` from `@ai-sdk/react`. Streaming text, tool-call rendering, abort, regenerate, footnote citations. |
 | `lib/tools.ts` | Two tools: `calculator` (recursive-descent parser, no `eval`) and `search` (offline corpus). Both follow the AI SDK `tool({ description, parameters, execute })` shape. |
 | `lib/prompts.ts` | The system prompt. Stable across calls so the Anthropic provider can prompt-cache it. |
-| `lib/mock-provider.ts` | Chunked async iterable, a mock AI SDK model built on it, SSE framer + timing helper. Used by tests and the TTFB benchmark to remove the network from the measurement. |
-| `benchmarks/ttft_benchmark.ts` | 200-run TTFB + total measurement of the framework. Writes JSON to `benchmarks/results/`. |
-| `tests/` | Vitest + Testing Library. 30 tests covering the chat handler's checks, tool parsing, mock streaming, SSE framing, citation rendering, benchmark math. |
+| `lib/mock-provider.ts` | Chunked async iterable, a mock AI SDK model built on it, and a response timing helper. Used by tests and the TTFB benchmark to take the network and the LLM out of the measurement. |
+| `benchmarks/ttft_benchmark.ts` | 200-run TTFB, first-text-delta and total measurement of the chat handler with the mock model. Writes JSON to `benchmarks/results/`. |
+| `tests/` | Vitest + Testing Library. 29 tests covering the chat handler's checks, tool parsing, mock streaming, response timing, citation rendering, the benchmark setup. |
 
 ## Why this matters for production
 
@@ -96,7 +99,7 @@ React message parts render incrementally                       Anthropic produce
                                                                text + tool deltas
 ```
 
-The browser sees a `ReadableStream<Uint8Array>` of `data: ...\n\n` lines. `useChat` parses them and incrementally pushes parts onto each message. Our `Message` component knows how to render four part types: text, tool-invocation (running), tool-invocation (result), and the implicit citations the `search` tool emits.
+The browser sees a `ReadableStream<Uint8Array>` in the AI SDK data stream format: one `TYPE:JSON` line per part (`0:"text"` for a text delta). `useChat` parses them and incrementally pushes parts onto each message. Our `Message` component knows how to render four part types: text, tool-invocation (running), tool-invocation (result), and the implicit citations the `search` tool emits.
 
 ## Citation rendering
 
@@ -115,14 +118,14 @@ This is in `components/message.tsx` and `components/citation.tsx`. Each is under
 npm test
 ```
 
-30 tests across:
+29 tests across:
 - **`chat-handler.test.ts`** — streams the mock model's reply with the right key; 503 with no key configured; 401 for a missing or wrong key; per-client rate limit and window reset; 413 for body, message count and message length; 400 for bad JSON, roles and shapes. None of the rejected requests reaches the model.
 - **`route.test.ts`** — the real route refuses unauthenticated requests without calling Anthropic.
 - **`chat.test.tsx`** — the UI sends the access key as a bearer token.
 - **`tools.test.ts`** — calculator handles `+`, `-`, `*`, `/`, `%`, `**`, unary minus, parens, division by zero, trailing garbage. Search returns matching snippets and rejects empty queries.
-- **`mock-provider.test.ts`** — chunked async iterable, per-chunk delay, SSE framing (`data: <json>\n\n`).
+- **`mock-provider.test.ts`** — chunked async iterable, per-chunk delay, response timing (first byte vs first text delta).
 - **`citation.test.tsx`** — render component with multiple citations, with empty list.
-- **`benchmark_smoke.test.ts`** — micro-bench math returns sane numbers.
+- **`benchmark_smoke.test.ts`** — the benchmark's handler + mock model streams the full reply, with ordered timings.
 
 ## Docker
 
@@ -151,14 +154,14 @@ lib/
   chat-handler.ts          # access key, rate limit, size limits, streamText + tools
   tools.ts                 # calculator + search
   prompts.ts               # SYSTEM_PROMPT (cacheable)
-  mock-provider.ts         # chunked stream + SSE framing + timing
+  mock-provider.ts         # chunked stream + mock model + response timing
 
 benchmarks/
-  ttft_benchmark.ts        # 200-run TTFB + total measurement
+  ttft_benchmark.ts        # 200-run TTFB through the chat handler
   results/
     ttft.json
 
-tests/                     # 30 vitest tests
+tests/                     # 29 vitest tests
 ```
 
 ## What this is NOT

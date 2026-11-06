@@ -1,15 +1,16 @@
-// Framework TTFB benchmark.
+// Chat handler TTFB benchmark.
 //
-// Streams a fixed-length reply through the same SSE pipeline the API route
-// uses, measures time-to-first-byte and total wall clock. No network, no
-// LLM. Pure measurement of the framework overhead between the model
-// producer (here a synthetic chunked generator) and the consumer (a
-// browser-style ReadableStream reader).
+// Sends POST requests straight into the chat handler (lib/chat-handler.ts,
+// the code app/api/chat/route.ts exports) with the Anthropic model swapped
+// for the mock in lib/mock-provider.ts. Each request goes through the access
+// key check, rate limiter, body read and validation, convertToCoreMessages,
+// streamText with the tools, and toDataStreamResponse. Timed from calling the
+// handler (the Request is built beforehand) to the first body byte (TTFB),
+// the first text delta (TTFT) and the end of the stream.
 //
-// Why this is a useful number even without a real LLM: the model adds the
-// same wire-time on top regardless of framework. The thing that varies
-// across React 18 / 19, App Router vs Pages Router, and SDK versions IS
-// the framework overhead.
+// Not measured: Next.js's HTTP server, the network, and the model itself,
+// which here streams the reply in 4-char deltas with no delay. A real model's
+// time to first token adds on top.
 //
 // Usage:
 //    npx tsx benchmarks/ttft_benchmark.ts --runs 200 --reply 240
@@ -17,7 +18,9 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { timeStream } from "../lib/mock-provider";
+
+import { createChatHandler } from "../lib/chat-handler";
+import { mockLanguageModel, timeStream } from "../lib/mock-provider";
 
 interface Args {
   runs: number;
@@ -45,40 +48,60 @@ function percentile(values: number[], p: number): number {
   return Number(sorted[idx]!.toFixed(3));
 }
 
+function stats(values: number[]) {
+  return {
+    mean: Number((values.reduce((a, b) => a + b, 0) / values.length).toFixed(3)),
+    p50: percentile(values, 0.5),
+    p95: percentile(values, 0.95),
+    p99: percentile(values, 0.99),
+    max: Number(Math.max(...values).toFixed(3)),
+  };
+}
+
+const KEY = "benchmark-access-key";
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const reply = "x".repeat(args.reply);
+  const handler = createChatHandler({
+    accessKey: () => KEY,
+    model: () => mockLanguageModel({ reply, perChunkDelayMs: 0, chunkSize: 4 }),
+    rateLimit: { limit: Number.POSITIVE_INFINITY, windowMs: 60_000 },
+  });
+  const request = () =>
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${KEY}` },
+      body: JSON.stringify({ messages: [{ role: "user", content: "hello" }] }),
+    });
 
-  // Warm up.
-  for (let i = 0; i < 20; i++) {
-    await timeStream({ reply, perChunkDelayMs: 0, chunkSize: 4 });
+  async function once() {
+    const req = request();
+    const t = await timeStream(() => handler(req));
+    if (t.status !== 200) throw new Error(`handler returned ${t.status}: ${t.body}`);
+    return t;
   }
 
+  // Warm up.
+  for (let i = 0; i < 20; i++) await once();
+
   const ttfbs: number[] = [];
+  const ttfts: number[] = [];
   const totals: number[] = [];
   for (let i = 0; i < args.runs; i++) {
-    const t = await timeStream({ reply, perChunkDelayMs: 0, chunkSize: 4 });
+    const t = await once();
     ttfbs.push(t.ttfbMs);
+    ttfts.push(t.ttftMs);
     totals.push(t.totalMs);
   }
 
   const summary = {
     runs: args.runs,
     reply_chars: args.reply,
-    ttfb_ms: {
-      mean: Number((ttfbs.reduce((a, b) => a + b, 0) / ttfbs.length).toFixed(3)),
-      p50: percentile(ttfbs, 0.5),
-      p95: percentile(ttfbs, 0.95),
-      p99: percentile(ttfbs, 0.99),
-      max: Number(Math.max(...ttfbs).toFixed(3)),
-    },
-    total_ms: {
-      mean: Number((totals.reduce((a, b) => a + b, 0) / totals.length).toFixed(3)),
-      p50: percentile(totals, 0.5),
-      p95: percentile(totals, 0.95),
-      p99: percentile(totals, 0.99),
-      max: Number(Math.max(...totals).toFixed(3)),
-    },
+    node: process.version,
+    ttfb_ms: stats(ttfbs),
+    ttft_ms: stats(ttfts),
+    total_ms: stats(totals),
   };
 
   const here = dirname(fileURLToPath(import.meta.url));
@@ -86,7 +109,7 @@ async function main(): Promise<void> {
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, JSON.stringify(summary, null, 2));
 
-  console.log("=== TTFB benchmark summary ===");
+  console.log("=== Chat handler TTFB benchmark summary ===");
   console.log(JSON.stringify(summary, null, 2));
   console.log(`\nWrote ${out}`);
 }

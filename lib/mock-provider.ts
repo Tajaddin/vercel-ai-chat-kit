@@ -51,61 +51,47 @@ export function mockLanguageModel(opts: MockStreamOptions): MockLanguageModelV1 
 }
 
 /**
- * Convert the mock async iterable into an actual SSE-shaped ReadableStream
- * that a fetch consumer would see. Each chunk is sent as a `data: <json>\n\n`
- * line so the client parses it the way it would parse Vercel's stream.
+ * Time a streamed response, from calling `send` to:
+ *  - ttfbMs: the first body chunk;
+ *  - ttftMs: the first chunk carrying a text delta (a `0:` line in the AI SDK
+ *    data stream), or the end of the body if none arrives;
+ *  - totalMs: the end of the body.
  */
-export function toSseStream(stream: AsyncIterable<StreamChunk>): ReadableStream<Uint8Array> {
-  const encoder = new TextEncoder();
-  return new ReadableStream({
-    async start(controller) {
-      try {
-        for await (const chunk of stream) {
-          const line = `data: ${JSON.stringify(chunk)}\n\n`;
-          controller.enqueue(encoder.encode(line));
-        }
-        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-        controller.close();
-      } catch (err) {
-        controller.error(err);
-      }
-    },
-  });
-}
-
-/**
- * Round-trip helper: pipe the mock stream into an SSE-shaped ReadableStream,
- * then read it back, recording the time-to-first-byte (TTFB) and total time.
- */
-export async function timeStream(opts: MockStreamOptions): Promise<{
+export async function timeStream(send: () => Promise<Response>): Promise<{
+  status: number;
   ttfbMs: number;
+  ttftMs: number;
   totalMs: number;
-  textLength: number;
   chunks: number;
   bytes: number;
+  body: string;
 }> {
-  const stream = toSseStream(mockTextStream(opts));
-  const reader = stream.getReader();
   const start = performance.now();
-
-  // First chunk
-  const firstChunkResult = await reader.read();
-  const ttfbMs = performance.now() - start;
-
-  let chunks = firstChunkResult.done ? 0 : 1;
-  let bytes = firstChunkResult.done ? 0 : firstChunkResult.value!.byteLength;
-  while (true) {
+  const res = await send();
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let ttfbMs: number | undefined;
+  let ttftMs: number | undefined;
+  let chunks = 0;
+  let bytes = 0;
+  let body = "";
+  for (;;) {
     const r = await reader.read();
     if (r.done) break;
+    ttfbMs ??= performance.now() - start;
     chunks++;
-    bytes += r.value!.byteLength;
+    bytes += r.value.byteLength;
+    body += decoder.decode(r.value, { stream: true });
+    if (ttftMs === undefined && /(^|\n)0:/.test(body)) ttftMs = performance.now() - start;
   }
   const totalMs = performance.now() - start;
   return {
-    ttfbMs,
+    status: res.status,
+    ttfbMs: ttfbMs ?? totalMs,
+    ttftMs: ttftMs ?? totalMs,
     totalMs,
-    textLength: opts.reply.length,
     chunks,
     bytes,
+    body,
   };
 }
