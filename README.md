@@ -1,6 +1,6 @@
 # vercel-ai-chat-kit
 
-> Production-shape Next.js 15 + Vercel AI SDK chat. **Chat API handler TTFB 0.50 ms p50** (in-process, mock model), streaming responses, tool calls with footnote citations, abort + regenerate, access-key gate, rate limit and request size limits on the chat API, 100% TypeScript strict, 124 kB First Load JS. 34 tests, reproducible benchmarks in seconds.
+> Production-shape Next.js 15 + Vercel AI SDK chat. **Chat API handler TTFB 0.28-0.43 ms p50** (five runs, in-process, mock model), streaming responses, tool calls with footnote citations, abort + regenerate, access-key gate, rate limit and request size limits on the chat API, 100% TypeScript strict, 124 kB First Load JS. 34 tests, reproducible benchmarks in seconds.
 
 [![ci](https://github.com/Tajaddin/vercel-ai-chat-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/Tajaddin/vercel-ai-chat-kit/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -14,13 +14,13 @@ Reproducible: `npx tsx benchmarks/ttft_benchmark.ts --runs 200 --reply 240`
 
 | 200 runs after 20 warm-up, Node 24.14, i5-13600KF | p50 | p95 | p99 |
 |---|---:|---:|---:|
-| **Time to first byte** | **0.50 ms** | 1.27 ms | 3.27 ms |
-| Time to first text delta | 0.54 ms | 1.37 ms | 3.33 ms |
-| Total stream (240 chars in 4-char deltas) | 2.46 ms | 5.55 ms | 7.46 ms |
+| **Time to first byte** | **0.317 ms** | 0.612 ms | 0.940 ms |
+| Time to first text delta | 0.340 ms | 0.663 ms | 1.022 ms |
+| Total stream (240 chars in 4-char deltas) | 1.637 ms | 2.546 ms | 2.842 ms |
 
-The tail is noisy: over three back-to-back runs, TTFB p50 stayed at 0.50-0.55 ms while p99 ranged from 3.3 to 6.5 ms. Raw output: `benchmarks/results/ttft.json`.
+Read the p50 column. Over five back-to-back runs, TTFB p50 stayed between 0.28 and 0.43 ms, with other work holding the machine at 75-90% CPU. The tail depends on that load far more than on the handler: p99 was 0.65-0.94 ms in these runs and 3.3-6.5 ms in an earlier set, so p95 and p99 above are one sample. The table is the last of the five runs; raw output: `benchmarks/results/ttft.json`.
 
-Real-world TTFB on the live Anthropic API is bounded by Claude's TTFT (typically 150-400 ms for Haiku 4.5). The handler adds about half a millisecond at the median.
+Real-world TTFB on the live Anthropic API is bounded by Claude's TTFT (typically 150-400 ms for Haiku 4.5). In these runs the handler added under half a millisecond at the median.
 
 Bundle size:
 - **First Load JS for `/`: 124 kB** (`next build`; Next.js 15 App Router, React 19, full chat + tool rendering + citations)
