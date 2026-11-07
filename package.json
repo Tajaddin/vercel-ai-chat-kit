@@ -2,7 +2,7 @@
   "name": "vercel-ai-chat-kit",
   "version": "0.1.0",
   "private": true,
-  "description": "Production-shape Next.js 15 + Vercel AI SDK chat. Streaming SSE, tool calls, citations, abort/regenerate. Hero: framework TTFT median <1ms with mock provider, 100% TypeScript strict.",
+  "description": "Production-shape Next.js 15 + Vercel AI SDK chat. Streaming responses, tool calls, citations, abort/regenerate, access-key gated API. Chat handler TTFB 0.28-0.43 ms p50 over five runs, in-process with a mock model, 100% TypeScript strict.",
   "license": "MIT",
   "author": "Tajaddin Gafarov <gafarovtajaddin@gmail.com>",
   "type": "module",

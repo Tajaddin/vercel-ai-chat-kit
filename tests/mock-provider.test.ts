@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { mockTextStream, timeStream, toSseStream } from "@/lib/mock-provider";
+import { mockTextStream, timeStream } from "@/lib/mock-provider";
 
 describe("mockTextStream", () => {
   it("emits chunks of the requested size", async () => {
@@ -24,30 +24,23 @@ describe("mockTextStream", () => {
   });
 });
 
-describe("toSseStream", () => {
-  it("frames each chunk as data: <json>\\n\\n", async () => {
-    const stream = toSseStream(mockTextStream({ reply: "hi", chunkSize: 1 }));
-    const reader = stream.getReader();
-    const decoder = new TextDecoder();
-    const lines: string[] = [];
-    while (true) {
-      const r = await reader.read();
-      if (r.done) break;
-      lines.push(decoder.decode(r.value));
-    }
-    const combined = lines.join("");
-    expect(combined).toContain(`data: {"type":"text-delta","textDelta":"h"}\n\n`);
-    expect(combined).toContain(`data: {"type":"text-delta","textDelta":"i"}\n\n`);
-    expect(combined).toContain("data: [DONE]\n\n");
-  });
-});
-
 describe("timeStream", () => {
-  it("returns ttfb and total times", async () => {
-    const t = await timeStream({ reply: "abcdefghij", chunkSize: 2 });
-    expect(t.chunks).toBeGreaterThan(0);
-    expect(t.ttfbMs).toBeGreaterThanOrEqual(0);
-    expect(t.totalMs).toBeGreaterThanOrEqual(t.ttfbMs);
-    expect(t.textLength).toBe(10);
+  it("times the first byte, the first text delta and the end separately", async () => {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        controller.enqueue(encoder.encode('f:{"messageId":"m"}\n'));
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        controller.enqueue(encoder.encode('0:"hi"\n'));
+        controller.close();
+      },
+    });
+    const t = await timeStream(async () => new Response(body));
+    expect(t.status).toBe(200);
+    expect(t.chunks).toBe(2);
+    expect(t.body).toBe('f:{"messageId":"m"}\n0:"hi"\n');
+    expect(t.bytes).toBe(t.body.length);
+    expect(t.ttftMs).toBeGreaterThan(t.ttfbMs);
+    expect(t.totalMs).toBeGreaterThanOrEqual(t.ttftMs);
   });
 });
